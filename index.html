@@ -5,7 +5,6 @@
   <title>IDV Assignment 4 – Robust Accuracy (Metric-wise View)</title>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
 
-  <!-- 蓝色系样式，三大类按按钮切换，柱子按 4 个数据集分组 -->
   <style>
     :root{
       --bg: #050816;
@@ -16,7 +15,6 @@
       --text-main: #e5f0ff;
       --text-muted: #9fb3d4;
       --grid-line: #32446d;
-      /* 数据集颜色（全是蓝色系不同深浅） */
       --cifar100: #9fd1ff;
       --cifar10:  #6fb1ff;
       --svhn:     #3d82f2;
@@ -231,16 +229,15 @@
     <h1>Interactive Robust Accuracy (Metric-wise Grouped View)</h1>
     <p class="subtitle">
       Data source: Excel results of 9 approaches × 4 datasets × 3 metrics.
-      Here we group and view data by three main metric categories:
+      We group and view by three main metric categories:
       <strong>Standard Accuracy</strong>,
       <strong>Certified Robustness Rate</strong>,
       <strong>Certified Robust Accuracy</strong>.
     </p>
 
-    <!-- 顶部：三大类指标切换 -->
     <section class="controls">
       <div class="metric-toggle" id="metricToggle"></div>
-      <p class="hint">Click a metric category to switch view · Bars are grouped by datasets within each approach.</p>
+      <p class="hint">Click a metric category · Bars are grouped by datasets within each approach.</p>
     </section>
 
     <section class="chart-card">
@@ -254,69 +251,46 @@
 
       <svg id="chart"></svg>
 
-      <!-- 数据集图例 -->
       <div class="legend"></div>
     </section>
 
     <section class="notes">
       <h2>How to read this chart</h2>
       <ul>
-        <li>The chart <strong>always uses all data from the Excel table</strong> – no rows or columns are dropped.</li>
-        <li>You can switch between:
-          <strong>Standard Accuracy</strong>,
-          <strong>Certified Robustness Rate (CRR)</strong>,
-          <strong>Certified Robust Accuracy (CRA)</strong>.
-        </li>
-        <li>For each metric category, the x-axis lists 9 approaches (ERM, DA, PGDT, TRADES, MART, RS, IBP, PRL, TandT).</li>
-        <li>Within each approach, 4 blue bars show the performance on
-          CIFAR-100, CIFAR-10, SVHN, and MNIST.
-        </li>
-        <li>Bars animate in from zero on page load (non-interaction transition) and smoothly update when you switch metrics.</li>
-        <li>Hover any bar to see the exact value, dataset name, and approach.</li>
+        <li>All Excel data are loaded (9 approaches × 4 datasets × 3 metrics), no row or column is dropped.</li>
+        <li>Switch between <strong>Standard Accuracy</strong>,
+            <strong>Certified Robustness Rate (CRR)</strong>,
+            <strong>Certified Robust Accuracy (CRA)</strong> using the top buttons.</li>
+        <li>Within each approach, 4 bars show CIFAR-100, CIFAR-10, SVHN, and MNIST.</li>
+        <li>Bars animate in from zero on page load, and transitions are smooth when switching metrics.</li>
+        <li>Hover a bar to see the exact value and details.</li>
       </ul>
     </section>
   </main>
 
   <div id="tooltip" class="tooltip"></div>
 
-  <!-- D3.js -->
   <script src="https://d3js.org/d3.v7.min.js"></script>
   <script>
-    // ---------- 基本布局 ----------
     const margin = { top: 36, right: 20, bottom: 70, left: 70 };
     const outerWidth = 960;
     const outerHeight = 520;
     const width = outerWidth - margin.left - margin.right;
     const height = outerHeight - margin.top - margin.bottom;
 
-    // 三大类指标
     const metricModes = [
-      {
-        id: "Std",
-        label: "Standard Accuracy",
-        description: "Clean (standard) accuracy on each dataset."
-      },
-      {
-        id: "CRR",
-        label: "Certified Robustness Rate",
-        description: "Percentage of samples that can be certified as robust."
-      },
-      {
-        id: "CRA",
-        label: "Certified Robust Accuracy",
-        description: "Accuracy restricted to certifiably robust samples."
-      }
+      { id: "Std", label: "Standard Accuracy" },
+      { id: "CRR", label: "Certified Robustness Rate" },
+      { id: "CRA", label: "Certified Robust Accuracy" }
     ];
 
-    // 四个数据集
     const datasets = [
       { id: "CIFAR100", label: "CIFAR-100", color: "#9fd1ff" },
       { id: "CIFAR10",  label: "CIFAR-10",  color: "#6fb1ff" },
-      { id: "SVHN",     label: "SVHN",     color: "#3d82f2" },
-      { id: "MNIST",    label: "MNIST",    color: "#214070" }
+      { id: "SVHN",     label: "SVHN",      color: "#3d82f2" },
+      { id: "MNIST",    label: "MNIST",     color: "#214070" }
     ];
 
-    // 不同指标 → 对应列名
     const columnMap = {
       Std: {
         CIFAR100: "Std Acc - CIFAR100",
@@ -365,13 +339,16 @@
       .attr("text-anchor", "middle")
       .text("Percentage (%)");
 
-    const x0 = d3.scaleBand().paddingInner(0.18).paddingOuter(0.08); // approach
-    const x1 = d3.scaleBand().padding(0.12);                         // dataset within approach
+    const x0 = d3.scaleBand().paddingInner(0.18).paddingOuter(0.08);
+    const x1 = d3.scaleBand().padding(0.12);
     const y = d3.scaleLinear().range([height, 0]);
 
     const tooltip = d3.select("#tooltip");
 
-    // ---------- 顶部：三大类指标按钮 ----------
+    // 关键修正：在外层声明 updateChart，按钮里只调用这个变量
+    let updateChart = null;
+
+    // 顶部按钮
     const metricToggle = d3.select("#metricToggle");
     metricToggle.selectAll("button")
       .data(metricModes)
@@ -382,10 +359,10 @@
       .text(d => d.label)
       .on("click", (event, d) => {
         metricToggle.selectAll("button").classed("active", m => m.id === d.id);
-        update(d.id);
+        if (updateChart) updateChart(d.id);   // ✅ 不再直接调用未定义的 update
       });
 
-    // ---------- 图例：四个数据集 ----------
+    // 图例
     const legend = d3.select(".legend");
     const legendItems = legend.selectAll(".legend-item")
       .data(datasets)
@@ -400,9 +377,8 @@
     legendItems.append("span")
       .text(d => d.label);
 
-    // ---------- 读取 CSV 并绘图 ----------
+    // 加载数据并设置真正的 updateChart
     d3.csv("results.csv").then(raw => {
-      // 转数值
       raw.forEach(row => {
         for (const key in row) {
           if (key !== "Approach" && row[key] !== "" && row[key] != null) {
@@ -414,9 +390,8 @@
       const approaches = raw.map(d => d.Approach);
       x0.domain(approaches).range([0, width]);
       x1.domain(datasets.map(ds => ds.id)).range([0, x0.bandwidth()]);
-      y.domain([0, 100]); // 百分比
+      y.domain([0, 100]);
 
-      // 坐标轴和网格
       xAxisGroup.call(d3.axisBottom(x0));
       xAxisGroup.selectAll("text")
         .attr("dy", "1.0em")
@@ -437,14 +412,11 @@
       );
       gridGroup.select(".domain").remove();
 
-      // 初次加载：Standard Accuracy，带非交互触发动画
-      update("Std", true);
-
-      function update(metricId, firstLoad = false) {
+      // 真正的更新函数，赋值给外层变量
+      updateChart = function(metricId, firstLoad = false){
         const metricInfo = metricModes.find(m => m.id === metricId);
         d3.select("#currentMetricLabel").text(metricInfo.label);
 
-        // 把数据展开成 (approach, dataset) 形式
         const flat = [];
         raw.forEach(row => {
           datasets.forEach(ds => {
@@ -469,7 +441,6 @@
           .duration(firstLoad ? 900 : 750)
           .ease(d3.easeCubicOut);
 
-        // enter + update
         bars.enter()
           .append("rect")
           .attr("class", "bar")
@@ -505,13 +476,15 @@
           .attr("height", d => height - y(d.value))
           .attr("fill", d => d.color);
 
-        // exit
         bars.exit()
           .transition(t)
           .attr("y", height)
           .attr("height", 0)
           .remove();
-      }
+      };
+
+      // 初次绘图：Standard Accuracy
+      updateChart("Std", true);
     }).catch(err => {
       console.error("Error loading results.csv:", err);
     });
