@@ -2,10 +2,10 @@
 <html lang="en">
 <head>
   <meta charset="utf-8"/>
-  <title>IDV Assignment 4 – Robust Accuracy Dashboard (D3.js)</title>
+  <title>IDV Assignment 4 – Robust Accuracy (Metric-wise View)</title>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
 
-  <!-- 简单的蓝色系样式 -->
+  <!-- 蓝色系样式，三大类按按钮切换，柱子按 4 个数据集分组 -->
   <style>
     :root{
       --bg: #050816;
@@ -16,9 +16,11 @@
       --text-main: #e5f0ff;
       --text-muted: #9fb3d4;
       --grid-line: #32446d;
-      --bar-std: #8ec1ff;
-      --bar-crr: #4b8fe8;
-      --bar-cra: #1e3f7a;
+      /* 数据集颜色（全是蓝色系不同深浅） */
+      --cifar100: #9fd1ff;
+      --cifar10:  #6fb1ff;
+      --svhn:     #3d82f2;
+      --mnist:    #214070;
       --tooltip-bg: #111827;
     }
 
@@ -64,16 +66,16 @@
       flex-wrap:wrap;
       align-items:center;
       gap:10px;
-      margin-bottom:4px;
+      margin-bottom:6px;
     }
 
-    .dataset-toggle{
+    .metric-toggle{
       display:flex;
       flex-wrap:wrap;
       gap:8px;
     }
 
-    .dataset-btn{
+    .metric-btn{
       border-radius:999px;
       border:1px solid transparent;
       background:var(--accent-soft);
@@ -84,12 +86,12 @@
       transition:all .18s ease;
     }
 
-    .dataset-btn:hover{
+    .metric-btn:hover{
       border-color:var(--accent);
       box-shadow:0 0 0 1px rgba(77,163,255,0.24);
     }
 
-    .dataset-btn.active{
+    .metric-btn.active{
       background:var(--accent);
       color:#020617;
       font-weight:600;
@@ -226,42 +228,51 @@
 </head>
 <body>
   <main class="page">
-    <h1>Interactive Robust Accuracy Comparison (D3.js)</h1>
+    <h1>Interactive Robust Accuracy (Metric-wise Grouped View)</h1>
     <p class="subtitle">
-      Data source: Excel table of robustness experiments (9 approaches × 4 datasets × 3 metrics).
-      All values are loaded directly from <code>results.csv</code> and visualised without modification.
+      Data source: Excel results of 9 approaches × 4 datasets × 3 metrics.
+      Here we group and view data by three main metric categories:
+      <strong>Standard Accuracy</strong>,
+      <strong>Certified Robustness Rate</strong>,
+      <strong>Certified Robust Accuracy</strong>.
     </p>
 
+    <!-- 顶部：三大类指标切换 -->
     <section class="controls">
-      <div class="dataset-toggle" id="datasetToggle"></div>
-      <p class="hint">Click a dataset to switch the grouped bars · Hover bars for exact values.</p>
+      <div class="metric-toggle" id="metricToggle"></div>
+      <p class="hint">Click a metric category to switch view · Bars are grouped by datasets within each approach.</p>
     </section>
 
     <section class="chart-card">
       <p class="title-main">
-        Per-approach performance on <span id="currentDatasetLabel">CIFAR-100</span>
+        Current metric:
+        <span id="currentMetricLabel">Standard Accuracy</span>
       </p>
       <p class="title-secondary">
-        Grouped by training / robustness approach · Bars show Standard Accuracy, Certified Robust Rate (CRR), and Certified Robust Accuracy (CRA).
+        X-axis: training / robustness approaches · Grouped bars: CIFAR-100, CIFAR-10, SVHN, MNIST · Y-axis: percentage (%).
       </p>
 
       <svg id="chart"></svg>
 
+      <!-- 数据集图例 -->
       <div class="legend"></div>
     </section>
 
     <section class="notes">
       <h2>How to read this chart</h2>
       <ul>
-        <li>The x-axis shows the <strong>training / defence approach</strong> (ERM, DA, PGDT, TRADES, MART, RS, IBP, PRL, TandT).</li>
-        <li>The y-axis is the percentage value (0–100%) for the selected dataset.</li>
-        <li>For each approach, three blue bars appear:
-          <strong>Std</strong> (standard accuracy),
-          <strong>CRR</strong> (certified robust rate),
-          <strong>CRA</strong> (certified robust accuracy).
+        <li>The chart <strong>always uses all data from the Excel table</strong> – no rows or columns are dropped.</li>
+        <li>You can switch between:
+          <strong>Standard Accuracy</strong>,
+          <strong>Certified Robustness Rate (CRR)</strong>,
+          <strong>Certified Robust Accuracy (CRA)</strong>.
         </li>
-        <li>Use the buttons above the chart to switch between CIFAR-100, CIFAR-10, SVHN, and MNIST without losing any data.</li>
-        <li>Bars animate in from zero on page load (non-interaction transition), and smoothly update when you change datasets.</li>
+        <li>For each metric category, the x-axis lists 9 approaches (ERM, DA, PGDT, TRADES, MART, RS, IBP, PRL, TandT).</li>
+        <li>Within each approach, 4 blue bars show the performance on
+          CIFAR-100, CIFAR-10, SVHN, and MNIST.
+        </li>
+        <li>Bars animate in from zero on page load (non-interaction transition) and smoothly update when you switch metrics.</li>
+        <li>Hover any bar to see the exact value, dataset name, and approach.</li>
       </ul>
     </section>
   </main>
@@ -271,46 +282,59 @@
   <!-- D3.js -->
   <script src="https://d3js.org/d3.v7.min.js"></script>
   <script>
-    // ---------- Config ----------
+    // ---------- 基本布局 ----------
     const margin = { top: 36, right: 20, bottom: 70, left: 70 };
     const outerWidth = 960;
     const outerHeight = 520;
     const width = outerWidth - margin.left - margin.right;
     const height = outerHeight - margin.top - margin.bottom;
 
+    // 三大类指标
+    const metricModes = [
+      {
+        id: "Std",
+        label: "Standard Accuracy",
+        description: "Clean (standard) accuracy on each dataset."
+      },
+      {
+        id: "CRR",
+        label: "Certified Robustness Rate",
+        description: "Percentage of samples that can be certified as robust."
+      },
+      {
+        id: "CRA",
+        label: "Certified Robust Accuracy",
+        description: "Accuracy restricted to certifiably robust samples."
+      }
+    ];
+
+    // 四个数据集
     const datasets = [
-      { id: "CIFAR100", label: "CIFAR-100" },
-      { id: "CIFAR10",  label: "CIFAR-10" },
-      { id: "SVHN",     label: "SVHN" },
-      { id: "MNIST",    label: "MNIST" }
+      { id: "CIFAR100", label: "CIFAR-100", color: "#9fd1ff" },
+      { id: "CIFAR10",  label: "CIFAR-10",  color: "#6fb1ff" },
+      { id: "SVHN",     label: "SVHN",     color: "#3d82f2" },
+      { id: "MNIST",    label: "MNIST",    color: "#214070" }
     ];
 
-    const metrics = [
-      { id: "Std", label: "Standard Accuracy",          color: "#8ec1ff" },
-      { id: "CRR", label: "Certified Robust Rate (CRR)", color: "#4b8fe8" },
-      { id: "CRA", label: "Certified Robust Accuracy (CRA)", color: "#1e3f7a" }
-    ];
-
+    // 不同指标 → 对应列名
     const columnMap = {
-      CIFAR100: {
-        Std: "Std Acc - CIFAR100",
-        CRR: "CRR - CIFAR100",
-        CRA: "CRA - CIFAR100"
+      Std: {
+        CIFAR100: "Std Acc - CIFAR100",
+        CIFAR10:  "Std Acc - CIFAR10",
+        SVHN:     "Std Acc - SVHN",
+        MNIST:    "Std Acc - MNIST"
       },
-      CIFAR10: {
-        Std: "Std Acc - CIFAR10",
-        CRR: "CRR - CIFAR10",
-        CRA: "CRA - CIFAR10"
+      CRR: {
+        CIFAR100: "CRR - CIFAR100",
+        CIFAR10:  "CRR - CIFAR10",
+        SVHN:     "CRR - SVHN",
+        MNIST:    "CRR - MNIST"
       },
-      SVHN: {
-        Std: "Std Acc - SVHN",
-        CRR: "CRR - SVHN",
-        CRA: "CRA - SVHN"
-      },
-      MNIST: {
-        Std: "Std Acc - MNIST",
-        CRR: "CRR - MNIST",
-        CRA: "CRA - MNIST"
+      CRA: {
+        CIFAR100: "CRA - CIFAR100",
+        CIFAR10:  "CRA - CIFAR10",
+        SVHN:     "CRA - SVHN",
+        MNIST:    "CRA - MNIST"
       }
     };
 
@@ -339,32 +363,32 @@
       .attr("x", -height / 2)
       .attr("y", -50)
       .attr("text-anchor", "middle")
-      .text("Accuracy / Rate (%)");
+      .text("Percentage (%)");
 
-    const x0 = d3.scaleBand().paddingInner(0.18).paddingOuter(0.08);
-    const x1 = d3.scaleBand().padding(0.14);
+    const x0 = d3.scaleBand().paddingInner(0.18).paddingOuter(0.08); // approach
+    const x1 = d3.scaleBand().padding(0.12);                         // dataset within approach
     const y = d3.scaleLinear().range([height, 0]);
 
     const tooltip = d3.select("#tooltip");
 
-    // ---------- Dataset buttons ----------
-    const toggle = d3.select("#datasetToggle");
-    toggle.selectAll("button")
-      .data(datasets)
+    // ---------- 顶部：三大类指标按钮 ----------
+    const metricToggle = d3.select("#metricToggle");
+    metricToggle.selectAll("button")
+      .data(metricModes)
       .enter()
       .append("button")
       .attr("type", "button")
-      .attr("class", (d, i) => "dataset-btn" + (i === 0 ? " active" : ""))
+      .attr("class", (d,i) => "metric-btn" + (i === 0 ? " active" : ""))
       .text(d => d.label)
       .on("click", (event, d) => {
-        toggle.selectAll("button").classed("active", b => b.id === d.id);
+        metricToggle.selectAll("button").classed("active", m => m.id === d.id);
         update(d.id);
       });
 
-    // ---------- Legend ----------
+    // ---------- 图例：四个数据集 ----------
     const legend = d3.select(".legend");
     const legendItems = legend.selectAll(".legend-item")
-      .data(metrics)
+      .data(datasets)
       .enter()
       .append("div")
       .attr("class", "legend-item");
@@ -376,9 +400,9 @@
     legendItems.append("span")
       .text(d => d.label);
 
-    // ---------- Load data & draw ----------
+    // ---------- 读取 CSV 并绘图 ----------
     d3.csv("results.csv").then(raw => {
-      // Parse numeric fields
+      // 转数值
       raw.forEach(row => {
         for (const key in row) {
           if (key !== "Approach" && row[key] !== "" && row[key] != null) {
@@ -389,10 +413,10 @@
 
       const approaches = raw.map(d => d.Approach);
       x0.domain(approaches).range([0, width]);
-      x1.domain(metrics.map(m => m.id)).range([0, x0.bandwidth()]);
-      y.domain([0, 100]); // all values are percentages
+      x1.domain(datasets.map(ds => ds.id)).range([0, x0.bandwidth()]);
+      y.domain([0, 100]); // 百分比
 
-      // Axes & grid
+      // 坐标轴和网格
       xAxisGroup.call(d3.axisBottom(x0));
       xAxisGroup.selectAll("text")
         .attr("dy", "1.0em")
@@ -413,25 +437,27 @@
       );
       gridGroup.select(".domain").remove();
 
-      // 初次加载：带有非交互触发的 transition
-      update("CIFAR100", true);
+      // 初次加载：Standard Accuracy，带非交互触发动画
+      update("Std", true);
 
-      function update(datasetId, firstLoad = false) {
-        const datasetInfo = datasets.find(d => d.id === datasetId);
-        d3.select("#currentDatasetLabel").text(datasetInfo.label);
+      function update(metricId, firstLoad = false) {
+        const metricInfo = metricModes.find(m => m.id === metricId);
+        d3.select("#currentMetricLabel").text(metricInfo.label);
 
-        // Flatten data: one object per (approach, metric)
+        // 把数据展开成 (approach, dataset) 形式
         const flat = [];
         raw.forEach(row => {
-          metrics.forEach(m => {
-            const colName = columnMap[datasetId][m.id];
+          datasets.forEach(ds => {
+            const colName = columnMap[metricId][ds.id];
             flat.push({
-              id: row.Approach + "-" + m.id,
+              id: row.Approach + "-" + ds.id,
               approach: row.Approach,
-              metric: m.id,
-              metricLabel: m.label,
-              dataset: datasetInfo.label,
-              value: row[colName]
+              datasetId: ds.id,
+              datasetLabel: ds.label,
+              metricId: metricId,
+              metricLabel: metricInfo.label,
+              value: row[colName],
+              color: ds.color
             });
           });
         });
@@ -443,26 +469,26 @@
           .duration(firstLoad ? 900 : 750)
           .ease(d3.easeCubicOut);
 
+        // enter + update
         bars.enter()
           .append("rect")
           .attr("class", "bar")
-          .attr("x", d => x0(d.approach) + x1(d.metric))
+          .attr("x", d => x0(d.approach) + x1(d.datasetId))
           .attr("width", x1.bandwidth())
           .attr("y", height)
           .attr("height", 0)
           .attr("rx", 4)
           .attr("ry", 4)
-          .attr("fill", d => metrics.find(m => m.id === d.metric).color)
+          .attr("fill", d => d.color)
           .on("mousemove", (event, d) => {
-            const [cx, cy] = d3.pointer(event);
             tooltip
               .style("opacity", 1)
               .style("transform", "translateY(0px)")
               .style("left", (event.pageX + 16) + "px")
               .style("top", (event.pageY - 28) + "px")
               .html(
-                `<div class="tooltip-title">${d.dataset}</div>
-                 <div><strong>${d.metricLabel}</strong></div>
+                `<div class="tooltip-title">${d.metricLabel}</div>
+                 <div><strong>${d.datasetLabel}</strong></div>
                  <div>Approach: <strong>${d.approach}</strong></div>
                  <div>Value: <strong>${d.value.toFixed(2)}%</strong></div>`
               );
@@ -474,10 +500,12 @@
           })
           .merge(bars)
           .transition(t)
-          .attr("x", d => x0(d.approach) + x1(d.metric))
+          .attr("x", d => x0(d.approach) + x1(d.datasetId))
           .attr("y", d => y(d.value))
-          .attr("height", d => height - y(d.value));
+          .attr("height", d => height - y(d.value))
+          .attr("fill", d => d.color);
 
+        // exit
         bars.exit()
           .transition(t)
           .attr("y", height)
