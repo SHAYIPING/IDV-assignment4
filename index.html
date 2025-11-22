@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>IDV Assignment 4 – Attack Results Heatmap</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <!-- D3 -->
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+
+  <style>
+    :root{
+      --bg:#f5f5f7;
+      --panel:#ffffff;
+      --axis:#333333;
+      --grid:#e0e0e0;
+      --text:#222222;
+      --muted:#777777;
+      --accent:#3b82f6;
+      --cell-border:#f9fafb;
+    }
+
+    *{box-sizing:border-box;}
+    html,body{
+      margin:0;
+      padding:0;
+      background:var(--bg);
+      font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+      color:var(--text);
+    }
+
+    .page{
+      max-width:1100px;
+      margin:16px auto 32px;
+      padding:0 16px;
+    }
+
+    h1{
+      font-size:24px;
+      margin:8px 0 4px;
+      font-weight:600;
+    }
+    .subtitle{
+      font-size:14px;
+      color:var(--muted);
+      margin-bottom:16px;
+    }
+
+    .chart-card{
+      background:var(--panel);
+      border-radius:12px;
+      padding:16px 20px 20px;
+      box-shadow:0 8px 24px rgba(15,23,42,.08);
+      border:1px solid #e5e7eb;
+    }
+
+    .chart-title{
+      font-size:18px;
+      font-weight:600;
+      margin-bottom:4px;
+    }
+    .chart-caption{
+      font-size:13px;
+      color:var(--muted);
+      margin-bottom:8px;
+    }
+
+    svg{
+      width:100%;
+      height:auto;
+      display:block;
+    }
+
+    .axis path,
+    .axis line{
+      stroke:var(--grid);
+      stroke-width:1;
+      shape-rendering:crispEdges;
+    }
+
+    .axis text{
+      fill:var(--axis);
+      font-size:11px;
+    }
+
+    .y-axis text{
+      font-size:11px;
+    }
+
+    .x-axis text{
+      font-size:11px;
+      text-anchor:start;
+    }
+
+    .cell{
+      stroke:var(--cell-border);
+      stroke-width:1;
+      cursor:pointer;
+    }
+
+    .cell.faded{
+      opacity:0.18;
+    }
+
+    .rowLabel,
+    .colLabel{
+      transition:fill .15s,font-weight .15s;
+    }
+
+    .rowLabel.highlight-row,
+    .colLabel.highlight-col{
+      fill:var(--accent);
+      font-weight:600;
+    }
+
+    .legend-label{
+      font-size:11px;
+      fill:var(--muted);
+    }
+
+    .legend-title{
+      font-size:12px;
+      fill:var(--muted);
+      font-weight:500;
+    }
+
+    .tooltip{
+      position:absolute;
+      pointer-events:none;
+      background:rgba(15,23,42,.98);
+      color:#f9fafb;
+      padding:8px 10px;
+      border-radius:6px;
+      font-size:12px;
+      line-height:1.4;
+      box-shadow:0 8px 18px rgba(15,23,42,.4);
+      opacity:0;
+      transform:translateY(-4px);
+      transition:opacity .12s ease, transform .12s ease;
+      z-index:10;
+      max-width:220px;
+      white-space:nowrap;
+    }
+
+    .tooltip strong{
+      color:#bfdbfe;
+      font-weight:600;
+    }
+
+    .tooltip .value{
+      font-size:13px;
+      font-weight:600;
+      color:#bbf7d0;
+    }
+
+    .source-note{
+      font-size:11px;
+      color:var(--muted);
+      margin-top:8px;
+    }
+
+    /* small screen tweaks */
+    @media (max-width:640px){
+      .x-axis text{
+        font-size:10px;
+      }
+      .y-axis text{
+        font-size:10px;
+      }
+    }
+  </style>
+</head>
+<body>
+<div class="page">
+  <h1>Interactive Data Visualisation – Defense Accuracy Heatmap</h1>
+  <div class="subtitle">
+    Data source: <em>Attack Results</em> (Excel &rarr; CSV). Each cell shows test accuracy (%) under a specific attack &amp; defense method.
+  </div>
+
+  <div class="chart-card">
+    <div class="chart-title">Robustness of Different Defenses Against Attacks</div>
+    <div class="chart-caption">
+      Color encodes accuracy: darker = more robust. Hover any cell to see exact values and highlight the corresponding attack and defense.
+      On load, cells fade in automatically (non-interaction transition).
+    </div>
+
+    <!-- SVG container -->
+    <svg id="heatmap"></svg>
+
+    <div class="source-note">
+      Data fully loaded from <code>attack_results.csv</code> (all 26 attacks × 9 defenses, no filtering or aggregation).
+    </div>
+  </div>
+</div>
+
+<div class="tooltip" id="tooltip"></div>
+
+<script>
+  // Basic layout
+  const svg = d3.select("#heatmap");
+  const margin = { top: 80, right: 20, bottom: 80, left: 150 };
+  const fullWidth = 1050;
+  const cellHeight = 24; // row height per attack
+
+  // Color scale helper (Blue-Green map from low to high)
+  function makeColorScale(values){
+    const min = d3.min(values);
+    const max = d3.max(values);
+    // Avoid min==max
+    const domainMin = (min === max) ? min - 1 : min;
+    const domainMax = (min === max) ? max + 1 : max;
+    return d3.scaleSequential()
+             .domain([domainMin, domainMax])
+             .interpolator(d3.interpolateYlGnBu);
+  }
+
+  const tooltip = d3.select("#tooltip");
+
+  // Load CSV from the same folder: attack_results.csv
+  // This is exported 1:1 from the Excel sheet "Attack Results"
+  d3.csv("attack_results.csv", d3.autoType).then(raw => {
+    // Columns: Attack, ERM, DA, PGDT, TRADES, MART, RS, IBP, PRL, TandT
+    const methods = raw.columns.filter(c => c !== "Attack");
+    const attacks = raw.map(d => d.Attack);
+
+    // Long format: one object per (attack, method)
+    const longData = [];
+    raw.forEach(row => {
+      methods.forEach(m => {
+        longData.push({
+          attack: row.Attack,
+          method: m,
+          value: row[m]
+        });
+      });
+    });
+
+    // Check that we really loaded all rows/columns
+    // 26 attacks × 9 methods = 234 cells
+    // (No filtering or deletion is done anywhere)
+    // console.log("Long data length:", longData.length);
+
+    const height = margin.top + margin.bottom + attacks.length * cellHeight;
+    const width = fullWidth;
+
+    svg
+      .attr("viewBox", `0 0 ${width} ${height}`)
+      .attr("preserveAspectRatio", "xMidYMid meet");
+
+    const innerWidth = width - margin.left - margin.right;
+    const innerHeight = height - margin.top - margin.bottom;
+
+    const g = svg.append("g")
+                 .attr("transform", `translate(${margin.left},${margin.top})`);
+
+    // Scales
+    const x = d3.scaleBand()
+                .domain(methods)
+                .range([0, innerWidth])
+                .paddingInner(0.08)
+                .paddingOuter(0.02);
+
+    const y = d3.scaleBand()
+                .domain(attacks)
+                .range([0, innerHeight])
+                .paddingInner(0.08)
+                .paddingOuter(0.02);
+
+    const values = longData.map(d => d.value);
+    const color = makeColorScale(values);
+
+    // Axes
+    const xAxis = d3.axisTop(x);
+    const yAxis = d3.axisLeft(y);
+
+    const xAxisG = g.append("g")
+                    .attr("class", "axis x-axis")
+                    .attr("transform", "translate(0,0)")
+                    .call(xAxis);
+
+    xAxisG.selectAll("text")
+          .attr("class", "colLabel")
+          .attr("transform", "rotate(-45)")
+          .attr("dx", "-0.6em")
+          .attr("dy", "-0.4em")
+          .style("text-anchor", "end");
+
+    const yAxisG = g.append("g")
+                    .attr("class", "axis y-axis")
+                    .call(yAxis);
+
+    yAxisG.selectAll("text")
+          .attr("class", "rowLabel");
+
+    // Title above x-axis
+    g.append("text")
+      .attr("x", innerWidth / 2)
+      .attr("y", -50)
+      .attr("text-anchor", "middle")
+      .attr("fill", "#111827")
+      .style("font-size", "16px")
+      .style("font-weight", 600)
+      .text("Defense Methods");
+
+    // Title beside y-axis
+    g.append("text")
+      .attr("x", -margin.left + 10)
+      .attr("y", innerHeight / 2)
+      .attr("transform", `rotate(-90, ${-margin.left + 10}, ${innerHeight / 2})`)
+      .attr("text-anchor", "middle")
+      .attr("fill", "#111827")
+      .style("font-size", "16px")
+      .style("font-weight", 600)
+      .text("Attack Types");
+
+    // Heatmap cells
+    const cells = g.selectAll(".cell")
+      .data(longData, d => d.attack + "-" + d.method)
+      .join("rect")
+        .attr("class", "cell")
+        .attr("x", d => x(d.method))
+        .attr("y", d => y(d.attack))
+        .attr("width", x.bandwidth())
+        .attr("height", y.bandwidth())
+        .attr("rx", 4)
+        .attr("ry", 4)
+        .attr("fill", d => color(d.value))
+        .attr("opacity", 0);
+
+    // Non-interaction-triggered transition: fade in all cells on load
+    cells.transition()
+        .delay((d,i) => i * 8)
+        .duration(650)
+        .attr("opacity", 1);
+
+    // Interaction: hover to show tooltip and highlight row + column
+    cells.on("mouseover", (event, d) => {
+      // Tooltip
+      tooltip
+        .style("opacity", 1)
+        .style("transform", "translateY(0)")
+        .html(
+          `<div><strong>Attack:</strong> ${d.attack}</div>` +
+          `<div><strong>Defense:</strong> ${d.method}</div>` +
+          `<div class="value">Accuracy: ${d.value.toFixed(2)}%</div>`
+        );
+
+      const [pageX, pageY] = [event.pageX, event.pageY];
+      tooltip
+        .style("left", (pageX + 12) + "px")
+        .style("top", (pageY - 32) + "px");
+
+      // Dim all other cells
+      cells.classed("faded", cell => !(cell.attack === d.attack || cell.method === d.method));
+
+      // Highlight row labels & column labels
+      svg.selectAll(".rowLabel")
+         .classed("highlight-row", label => label.textContent === d.attack);
+
+      svg.selectAll(".colLabel")
+         .classed("highlight-col", label => label.textContent === d.method);
+    });
+
+    cells.on("mousemove", (event) => {
+      const [pageX, pageY] = [event.pageX, event.pageY];
+      tooltip
+        .style("left", (pageX + 12) + "px")
+        .style("top", (pageY - 32) + "px");
+    });
+
+    cells.on("mouseout", () => {
+      tooltip
+        .style("opacity", 0)
+        .style("transform", "translateY(-4px)");
+
+      cells.classed("faded", false);
+      svg.selectAll(".rowLabel").classed("highlight-row", false);
+      svg.selectAll(".colLabel").classed("highlight-col", false);
+    });
+
+    // Simple legend (min → max)
+    const legendWidth = 220;
+    const legendHeight = 12;
+    const legendMarginTop = innerHeight + 30;
+
+    const legendGroup = g.append("g")
+      .attr("transform", `translate(${(innerWidth - legendWidth) / 2},${legendMarginTop})`);
+
+    // Create gradient
+    const defs = svg.append("defs");
+    const gradientId = "legend-gradient";
+    const gradient = defs.append("linearGradient")
+      .attr("id", gradientId)
+      .attr("x1", "0%")
+      .attr("x2", "100%")
+      .attr("y1", "0%")
+      .attr("y2", "0%");
+
+    const stops = d3.range(0,1.01,0.1);
+    stops.forEach(t => {
+      gradient.append("stop")
+        .attr("offset", (t*100) + "%")
+        .attr("stop-color", color(d3.quantile(values.sort(d3.ascending), t)));
+    });
+
+    legendGroup.append("rect")
+      .attr("width", legendWidth)
+      .attr("height", legendHeight)
+      .attr("fill", `url(#${gradientId})`)
+      .attr("rx", 4)
+      .attr("ry", 4);
+
+    const valMin = d3.min(values);
+    const valMax = d3.max(values);
+
+    legendGroup.append("text")
+      .attr("class", "legend-title")
+      .attr("x", legendWidth / 2)
+      .attr("y", -6)
+      .attr("text-anchor", "middle")
+      .text("Accuracy (%)");
+
+    legendGroup.append("text")
+      .attr("class", "legend-label")
+      .attr("x", 0)
+      .attr("y", legendHeight + 12)
+      .attr("text-anchor", "start")
+      .text(valMin.toFixed(1));
+
+    legendGroup.append("text")
+      .attr("class", "legend-label")
+      .attr("x", legendWidth)
+      .attr("y", legendHeight + 12)
+      .attr("text-anchor", "end")
+      .text(valMax.toFixed(1));
+  })
+  .catch(err => {
+    console.error("Error loading CSV:", err);
+    svg.append("text")
+       .attr("x", 20)
+       .attr("y", 40)
+       .attr("fill", "crimson")
+       .style("font-size", "14px")
+       .text("Error: could not load attack_results.csv");
+  });
+</script>
+</body>
+</html>
